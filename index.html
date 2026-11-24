@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biology Scores Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--text:#1b2733;--muted:#66788a;--accent:#1f4e78;--bar:#2f80c0;--line:#dde3ea;--pos:#2e8b57;--neg:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f151c;--card:#18212b;--text:#e6edf3;--muted:#8fa1b3;--accent:#5aa9e6;--bar:#3b82c4;--line:#2a3643;--pos:#4cc38a;--neg:#ef6b5b}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--accent);color:#fff;padding:18px 16px}
+header h1{margin:0;font-size:1.25rem}
+header p{margin:4px 0 0;font-size:.85rem;opacity:.85}
+main{max-width:960px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+#q{width:100%;padding:14px 16px;font-size:1rem;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.tab{padding:8px 16px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;font-size:.9rem}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.tile b{display:block;font-size:1.5rem;color:var(--accent)}
+.tile span{font-size:.78rem;color:var(--muted)}
+h2{font-size:1rem;margin:0 0 12px}
+.hist{display:flex;align-items:flex-end;gap:10px;height:150px}
+.hist div{flex:1;text-align:center;font-size:.75rem;color:var(--muted);display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.hist i{display:block;background:var(--bar);border-radius:6px 6px 0 0;margin-bottom:4px;min-height:2px}
+.hist em{font-style:normal;color:var(--text);font-weight:600}
+.top li{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);list-style:none}
+.top{margin:0;padding:0}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{padding:8px 6px;text-align:left;border-bottom:1px solid var(--line)}
+th{cursor:pointer;color:var(--muted);font-weight:600;white-space:nowrap}
+td.n,th.n{text-align:center}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--bg)}
+.wrap{overflow-x:auto}
+.res{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.res .card{margin:0}
+.badge{display:inline-block;font-size:.72rem;padding:2px 9px;border-radius:10px;background:var(--bg);border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+.big{font-size:2.2rem;font-weight:700;color:var(--accent);margin:8px 0 0}
+.big small{font-size:.9rem;color:var(--muted);font-weight:400}
+.track{height:10px;border-radius:5px;background:var(--bg);margin:10px 0;overflow:hidden}
+.track i{display:block;height:100%;background:var(--bar)}
+.meta{font-size:.85rem;color:var(--muted);line-height:1.6}
+.pos{color:var(--pos)}.neg{color:var(--neg)}
+.msg{padding:20px;text-align:center;color:var(--muted)}
+.load{font-size:.8rem;color:var(--muted);margin-top:18px;text-align:center}
+.load label{color:var(--accent);cursor:pointer;text-decoration:underline}
+</style>
+</head>
+<body>
+<header><h1>Biology Scores Dashboard</h1><p id="sub">First Term 2026/2027</p></header>
+<main>
+  <input id="q" type="search" placeholder="Search a student by name…" autocomplete="off">
+  <div id="app"><div class="msg">Loading scores…</div></div>
+  <div class="load">Data: <code>scores.xlsx</code> · <label>Load a different file<input id="file" type="file" accept=".xlsx,.xls" hidden></label></div>
+</main>
+<script>
+const SRC='scores.xlsx';
+const S={classes:[],cur:0,q:'',sort:{k:'rank',d:1}};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const f1=n=>n==null?'—':(Math.round(n*10)/10).toString();
+const ord=n=>{const v=n%100,s=['th','st','nd','rd'];return n+(s[(v-20)%10]||s[v]||s[0])};
+
+function parse(wb){
+  return wb.SheetNames.map(name=>{
+    const a=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null});
+    const max=+(a[1]&&a[1][1])||20, mult=+(a[2]&&a[2][1])||1.5;
+    const rows=[];
+    for(let i=4;i<a.length&&a[i]&&typeof a[i][0]==='number';i++){
+      const r=a[i], raw=typeof r[2]==='number'?r[2]:null;
+      rows.push({sn:r[0],name:String(r[1]||'').trim(),raw,s30:raw==null?null:raw*mult,pct:raw==null?null:raw/max*100});
+    }
+    const sc=rows.filter(r=>r.raw!=null);
+    rows.forEach(r=>{r.rank=r.raw==null?null:1+sc.filter(x=>x.raw>r.raw).length});
+    const avg=k=>sc.length?sc.reduce((t,r)=>t+r[k],0)/sc.length:null;
+    return {name,label:name.split(' ')[0],kind:/CA/i.test(name)?'CA':'Exam',max,mult,rows,
+      n:rows.length,scored:sc.length,avgRaw:avg('raw'),avg30:avg('s30'),avgPct:avg('pct'),
+      hi:sc.length?Math.max(...sc.map(r=>r.raw)):null,lo:sc.length?Math.min(...sc.map(r=>r.raw)):null};
+  }).filter(c=>c.rows.length);
+}
+
+function render(){
+  const app=$('#app');
+  if(!S.classes.length){app.innerHTML='<div class="msg">No student data found.</div>';return}
+  S.q.trim()?renderSearch(app):renderDash(app);
+}
+
+function tabs(){
+  return '<div class="tabs">'+S.classes.map((c,i)=>`<button class="tab ${i===S.cur?'on':''}" data-i="${i}">${esc(c.label)} ${c.kind}</button>`).join('')+'</div>';
+}
+
+function renderDash(app){
+  const c=S.classes[S.cur];
+  const b=[0,0,0,0];
+  c.rows.forEach(r=>{if(r.pct!=null)b[r.pct<25?0:r.pct<50?1:r.pct<75?2:3]++});
+  const m=Math.max(...b,1), L=['0–24%','25–49%','50–74%','75–100%'];
+  const top=c.rows.filter(r=>r.raw!=null).sort((x,y)=>y.raw-x.raw||x.name.localeCompare(y.name)).slice(0,5);
+  const key=S.sort.k, dir=S.sort.d;
+  const rows=[...c.rows].sort((x,y)=>{
+    let a=x[key],bb=y[key];
+    if(key==='name')return dir*a.localeCompare(bb);
+    if(a==null)return 1; if(bb==null)return -1;
+    return dir*(a-bb)||x.name.localeCompare(y.name);
+  });
+  const th=(k,t,cls='')=>`<th class="${cls}" data-k="${k}">${t}${key===k?(dir>0?' ▲':' ▼'):''}</th>`;
+  app.innerHTML=tabs()+`
+  <div class="tiles">
+    <div class="tile"><b>${c.n}</b><span>Students</span></div>
+    <div class="tile"><b>${f1(c.avgRaw)}<small>/${c.max}</small></b><span>Average (${f1(c.avg30)}/${f1(c.max*c.mult)})</span></div>
+    <div class="tile"><b>${c.hi??'—'}</b><span>Highest (/${c.max})</span></div>
+    <div class="tile"><b>${c.lo??'—'}</b><span>Lowest (/${c.max})</span></div>
+    <div class="tile"><b>${f1(c.avgPct)}%</b><span>Average %</span></div>
+  </div>
+  <div class="card"><h2>Score distribution</h2><div class="hist">${b.map((v,i)=>`<div><em>${v}</em><i style="height:${v/m*100}%"></i>${L[i]}</div>`).join('')}</div></div>
+  <div class="card"><h2>Top 5</h2><ul class="top">${top.map(r=>`<li><span>${r.rank}. ${esc(r.name)}</span><b>${r.raw}/${c.max} · ${f1(r.s30)}/${f1(c.max*c.mult)}</b></li>`).join('')}</ul></div>
+  <div class="card wrap"><h2>All students — tap a row for details</h2>
+  <table><thead><tr>${th('sn','#','n')}${th('name','Name')}${th('raw','/'+c.max,'n')}${th('s30','/'+f1(c.max*c.mult),'n')}${th('pct','%','n')}${th('rank','Pos.','n')}</tr></thead>
+  <tbody>${rows.map(r=>`<tr data-n="${esc(r.name)}"><td class="n">${r.sn}</td><td>${esc(r.name)}</td><td class="n">${r.raw??'—'}</td><td class="n">${f1(r.s30)}</td><td class="n">${r.pct==null?'—':Math.round(r.pct)+'%'}</td><td class="n">${r.rank??'—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderSearch(app){
+  const q=S.q.trim().toLowerCase(), words=q.split(/\s+/);
+  const hits=[];
+  S.classes.forEach(c=>c.rows.forEach(r=>{const n=r.name.toLowerCase();if(words.every(w=>n.includes(w)))hits.push({c,r})}));
+  if(!hits.length){app.innerHTML=`<div class="msg">No student found for “${esc(S.q)}”.</div>`;return}
+  app.innerHTML=`<p class="meta">${hits.length} result${hits.length>1?'s':''}</p><div class="res">`+hits.slice(0,30).map(({c,r})=>{
+    const max30=c.max*c.mult;
+    if(r.raw==null)return `<div class="card"><b>${esc(r.name)}</b><span class="badge">${esc(c.label)} ${c.kind}</span><p class="meta">No score recorded.</p></div>`;
+    const d=r.s30-c.avg30;
+    return `<div class="card"><b>${esc(r.name)}</b><span class="badge">${esc(c.label)} ${c.kind}</span>
+    <div class="big">${f1(r.s30)}<small> / ${f1(max30)}</small></div>
+    <div class="track"><i style="width:${r.pct}%"></i></div>
+    <div class="meta">Original score: <b>${r.raw}/${c.max}</b> (${Math.round(r.pct)}%)<br>
+    Position: <b>${ord(r.rank)}</b> of ${c.scored}<br>
+    Class average: ${f1(c.avg30)}/${f1(max30)} · <span class="${d>=0?'pos':'neg'}">${d>=0?'+':''}${f1(d)} ${d>=0?'above':'below'}</span></div></div>`;
+  }).join('')+'</div>';
+}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('.tab'); if(t){S.cur=+t.dataset.i;render();return}
+  const h=e.target.closest('th[data-k]'); if(h){const k=h.dataset.k;S.sort=S.sort.k===k?{k,d:-S.sort.d}:{k,d:(k==='raw'||k==='s30'||k==='pct')?-1:1};render();return}
+  const r=e.target.closest('tr[data-n]'); if(r){$('#q').value=r.dataset.n;S.q=r.dataset.n;render();scrollTo(0,0)}
+});
+$('#q').addEventListener('input',e=>{S.q=e.target.value;render()});
+
+function load(buf){
+  try{S.classes=parse(XLSX.read(buf,{type:'array'}));S.cur=0;S.q='';$('#q').value='';render()}
+  catch(err){$('#app').innerHTML='<div class="msg">Could not read the spreadsheet.</div>'}
+}
+$('#file').addEventListener('change',e=>{const f=e.target.files[0];if(f)f.arrayBuffer().then(load)});
+fetch(SRC,{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.arrayBuffer()}).then(load)
+  .catch(()=>{$('#app').innerHTML='<div class="msg">Could not load <code>scores.xlsx</code>.<br>Host this on GitHub Pages, or use “Load a different file” below.</div>'});
+</script>
+</body>
+</html>
